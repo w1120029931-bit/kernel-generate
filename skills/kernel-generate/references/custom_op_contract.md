@@ -50,6 +50,7 @@
 ## 功能测试规则
 
 - 功能测试必须放在 `FlagDNN/tests_graph`。
+- 功能测试必须是 FlagDNN 的 triton 算子与 cudnn 算子做对比。
 - 编写测试时参考 FlagDNN 其他算子的测试框架、命名方式、fixture 和断言风格。
 - 功能测试 shape 需要根据当前算子的语义做针对性适配。
 - shape 覆盖要充分，至少覆盖典型 shape、边界 shape 和能暴露索引/mask 问题的非规则 shape。
@@ -59,11 +60,19 @@
 ## 性能测试规则
 
 - 性能测试必须放在 `FlagDNN/benchmark_graph`。
+- 性能测试必须是 FlagDNN 的 triton 算子与 cudnn 算子做对比。
 - 编写性能测试时参考 FlagDNN 其他算子的性能测试框架、命名方式、输入构造、计时方式和输出格式。
 - 性能测试 shape 需要根据当前算子的语义做针对性适配。
 - shape 覆盖要充分，至少覆盖典型生产 shape、边界 shape 和能暴露访存/启动开销瓶颈的 shape。
-- 根据仓库已有框架实现性能测试后，执行性能测试会输出 `speedup`信息，因此不要在性能测试代码中编写 assert `speedup >= 0.9` 等类似代码。
-- 当 `speedup < 0.9` 时，视为当前实现性能不合格，需要继续分析瓶颈并优化。
+- 根据仓库已有框架实现性能测试后，执行性能测试会输出 `speedup` 信息，因此不要在性能测试代码中编写 assert `speedup >= 0.9` 等类似代码。
+- 当 `speedup < 0.9` 时，视为当前实现性能不合格。由于性能测试使用了 graph 功能，必须先量化性能差是否由 graph、runner、prepared op 或 capture/dispatch 开销引起；只有实测显示 graph 不是主要瓶颈后，才能把主要优化方向转向 kernel 本体。
+
+## Graph 性能归因规则
+
+- 如果声称 graph 不是主要瓶颈，必须在优化日志中记录受控对比数据，例如 FlagDNN graph path、direct op 或 prepared runner path、可访问时的 Triton kernel wrapper path 的耗时和 speedup。
+- 如果 graph path 和 direct path 差距明显，先定位并优化 graph、runner、prepared op、capture 缓存或 dispatch 逻辑；不要直接归因到 kernel 算法。
+- 如果 direct path 仍明显慢于 cuDNN frontend，继续按通用 PTX/SASS/NCU 深度调优流程分析 kernel 本体。
+- 临时归因脚本或 benchmark 变体可以放在任务临时目录；只有对仓库后续有价值时才合入 `FlagDNN/benchmark_graph`。
 
 ## 自动调优规则
 
@@ -101,5 +110,7 @@
 - 基准实现：
 - 性能测试 shape：
 - speedup 输出方式：
+- graph/direct/kernel 归因方式：
+- 深度调优证据：PTX / SASS / NCU / 工具不可用原因
 - 必须达到：speedup >= 0.9
 ```

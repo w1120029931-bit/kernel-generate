@@ -8,6 +8,8 @@
 - [实现模式](#实现模式)
 - [常见算子形态](#常见算子形态)
 - [性能启发式](#性能启发式)
+- [迭代调优经验](#迭代调优经验)
+- [性能未达标的证据门槛](#性能未达标的证据门槛)
 - [Triton 调试环境变量](#triton-调试环境变量)
 - [PTX / SASS / NCU 深度调优](#ptx--sass--ncu-深度调优)
 - [正确性陷阱](#正确性陷阱)
@@ -83,6 +85,62 @@ Triton kernel 应该：
 
 只有当算子契约和项目约束允许时，才使用 autotune。候选配置要聚焦；过宽的 autotune 配置网格会拖慢测试，也会模糊主要瓶颈。
 
+## 迭代调优经验
+
+以下经验来自卷积、矩阵 tile 和带包装层执行路径的多轮 Triton 优化，适合在相似性能问题中优先检查。它们是启发式，不替代实测。
+
+### 先隔离包装层，再优化 kernel
+
+- 如果性能测试经过 graph、runner、prepared op、dispatcher 或输出分配层，先做受控对比：同一输入、同一 warmup/repeat、只改变调用路径。
+- graph replay 或 prepared runner 中的重复字典查找、属性解析、runtime 检查和输出分配，会放大小算子的延迟；能静态绑定的属性应在准备阶段绑定，能复用的输出 buffer 应在 replay 外复用。
+- 只有当包装层和 direct/kernel path 的差距被量化后，才把主要瓶颈归因到 kernel 本体。否则容易在 kernel 上反复调参却修不到真实慢点。
+
+### autotune 要有假设，找到后要收窄
+
+- autotune 对 `BLOCK_M`、通道 tile、归约 tile、`num_warps`、`num_stages` 很有价值，但配置网格应围绕瓶颈假设设计。先用少量候选确认方向，再局部扩展。
+- autotune key 必须包含会改变最佳配置的 shape、dtype、stride、dilation、kernel size、group 或 layout 信息；否则一个 dtype/shape 的最佳配置可能污染另一个用例。
+- 找到稳定最佳配置后，应把最终配置收窄或拆成小配置组，避免后续完整测试反复编译大量候选，也避免噪声把错误配置选成“最佳”。
+- 不要只相信单次短 repeat。小于十几微秒的 case 很容易因为 baseline 或候选侧微小抖动跨过阈值；临界用例应至少单独复跑一次，并争取留出性能余量。
+
+### dtype 和 shape 分流通常比统一 kernel 更稳
+
+- fp16、bf16、fp32 即使 shape 相同，也可能偏好不同 tile、不同 accumulator orientation、不同索引表达式和不同 `input_precision`。如果统一 fast path 让某个 dtype 回退，优先考虑 dtype-specific dispatch 或 dtype-specific autotune key。
+- shape-specific fast path 适合去掉通用路径中的无效计算、mask、整数除法和动态 stride。例如 1x1、stride=1、固定 padding、小固定通道数、固定 kernel size 都值得单独考虑。
+- 特化要控制数量。只有当该形态在必测或生产 shape 中稳定出现，并且实测超过通用 path，才保留专用 kernel。否则把复杂度留给 autotune 或通用 path。
+
+### tile orientation 和布局变换要用实测决定
+
+- 对 matmul/conv-like kernel，`tl.dot` 的矩阵方向会显著影响 Tensor Core 利用、寄存器压力和访存 coalescing。常见可比较方向包括 `(M, K) x (K, C)` 得到 `(M, C)`，以及 `(C, K) x (K, M)` 得到 `(C, M)`。
+- 看似更连续的 load 不一定更快。为了改善 coalescing 而引入 `tl.trans`、额外 mask 或更差的 dot tile 形状，可能整体回退。每次只改一个 orientation，并固定同一慢用例比较。
+- 当逻辑权重 layout 不适合 kernel 热路径时，可以考虑 packed layout 或预转置 layout。只有在 packed 结果能缓存、复用，或者转换成本明确不计入热路径时，才值得保留。
+- 对小固定通道数，避免在 padded channel 上做大量无效计算。必要时让专用 kernel 的 tile 精确覆盖有效通道，或改变 dot orientation 让有效维度成为更合适的矩阵边。
+
+### 减少整数索引和无效 filter tap
+
+- 热路径里的 `//`、`%`、复杂 `tl.where` 和多维坐标反解会拖慢小 tile。对 contiguous layout，可尝试直接使用 flatten offset 或 host 侧预计算 stride 常量。
+- flatten 索引减少整数运算，但不保证所有 dtype 都更快；它可能改变编译器 lowering、访存形态或寄存器使用。对临界 shape 要按 dtype 分别验证。
+- stride、padding、dilation 会让部分 filter tap 永远无效。可以按 parity、边界和 interior 拆分或合并分支，减少无效 tap；但多个 launch 可能吞掉收益，尤其是低精度或小 shape。优先尝试单 launch 内的合并映射，再考虑多 launch。
+
+### 失败尝试也要快速记录和回退
+
+- 常见但可能回退的尝试包括：盲目加大 channel tile、把所有 dtype 绑到同一配置、把通用 kernel 路由到另一个已有算子、为边界和 interior 拆多个 launch、对中等归约写显式 FMA 展开、为 coalescing 加转置。
+- 每轮只保留一个主要变化，并把慢用例、配置、结果和决策写入日志。变慢的修改要及时回退或隔离到更窄的 shape/dtype 分支。
+- 当某个优化只改善一种 dtype 或 shape 而伤害另一种，不要强行统一。把差异转化为 dispatch 条件、autotune key 或明确的“不保留”记录。
+
+## 性能未达标的证据门槛
+
+当任一必测用例 `speedup < 0.9`，先把最低 speedup 的用例作为代表性慢用例；如果慢用例明显分属不同 shape regime，则每个 regime 至少选择一个代表性用例。性能归因必须基于证据，而不是基于直觉或单次修改后的结果。
+
+最低证据要求：
+
+- benchmark 证据：记录命令、环境变量、shape、dtype、baseline time、candidate time、speedup、warmup/repeat/sync 方式，以及是否排除了编译、dump、capture 或异常处理时间。
+- 包装层证据：如果存在 Python wrapper、graph、runner、prepared op、dispatch 或 capture 层，必须做受控对比来量化包装层开销；没有对比数据时，不能声称包装层不是瓶颈。
+- kernel 证据：检查 program id 映射、tile、coalescing、冗余访存、mask、div/rem、atomic、barrier、寄存器压力、occupancy 线索和 autotune 选择。
+- 编译产物证据：报告性能未达标或阻塞前，至少 dump 并检查 PTX；如果有 cubin 和反汇编工具，检查 SASS；如果有 NCU，采集硬件指标。
+- baseline 证据：如果 baseline 可能使用更强算法或专用库路径，必须说明证据来源，例如 Tensor Core 指令、Winograd/FFT/implicit GEMM、fusion、特殊 layout 或持久化 kernel。
+
+阻塞或失败结论必须归类为以下之一：benchmark 偏差、包装层/graph 开销、kernel 本体瓶颈、baseline 算法差距、工具/环境阻塞、仍未归因。只有当有 roofline/硬件指标、PTX/SASS/NCU、baseline 算法或项目约束证据时，才能说理论上或当前技术路径上难以达到；否则结论应是“当前实现尚未达标，尚不能证明理论不可达”。
+
 ## Triton 调试环境变量
 
 迭代调试和性能优化时，可以按需给功能测试或性能测试命令添加以下环境变量：
@@ -119,9 +177,9 @@ TRITON_PRINT_AUTOTUNING=1 \
 
 ## PTX / SASS / NCU 深度调优
 
-当普通参数调节、少量 autotune 配置和代码级检查无法让 `speedup >= 0.9`，或者瓶颈假设不清晰时，升级到证据驱动的深度调优。核心原则：PTX 能提示问题，但不能单独证明瓶颈；SASS 更接近 GPU 实际执行；Nsight Compute 指标用于判断真实硬件瓶颈。
+当普通参数调节、少量 autotune 配置和代码级检查无法让 `speedup >= 0.9`，或者瓶颈假设不清晰时，升级到证据驱动的深度调优。报告性能未达标、阻塞或放弃继续优化前，也必须完成本节的可执行部分。核心原则：PTX 能提示问题，但不能单独证明瓶颈；SASS 更接近 GPU 实际执行；Nsight Compute 指标用于判断真实硬件瓶颈。
 
-仅在工具可用时执行本节：PTX/cubin dump 依赖 Triton dump；SASS 分析通常需要 NVIDIA CUDA 工具 `cuobjdump` 或 `nvdisasm`；NCU 分析需要 `ncu`。如果工具不可用，在优化日志中记录“未执行”和原因。
+PTX dump 是报告性能失败前的最低要求。SASS 分析通常需要 NVIDIA CUDA 工具 `cuobjdump` 或 `nvdisasm`；NCU 分析需要 `ncu`。如果 SASS 或 NCU 工具不可用，在优化日志中记录“未执行”、具体命令或工具缺失原因，以及使用了哪些替代证据。
 
 ### Dump 编译产物
 
@@ -226,6 +284,8 @@ ncu --target-processes all \
 - PTX 观察：
 - SASS 观察：
 - NCU 关键指标：
+- 工具不可用项及原因：
+- 瓶颈分类：benchmark 偏差 / 包装层或 graph 开销 / kernel 本体 / baseline 算法差距 / 工具或环境阻塞 / 未归因
 - 瓶颈假设：
 - 修改：
 - 功能测试结果：
