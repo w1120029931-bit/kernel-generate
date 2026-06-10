@@ -33,16 +33,14 @@
 | kernel 实现 | `FlagDNN/src/flag_dnn/ops` | 新增或修改 Triton 算子实现的位置。 |
 | 功能测试 | `FlagDNN/tests_graph` | 新增或修改功能测试的位置。 |
 | 性能测试 | `FlagDNN/benchmark_graph` | 新增或修改性能测试的位置。 |
-| NVIDIA 自动调优配置 | `FlagDNN/src/flag_dnn/runtime/backend/_nvidia/tune_configs.yaml` | 如需使用仓库级自动调优配置，在此添加或修改配置。 |
+| NVIDIA 自动调优配置 | `FlagDNN/src/flag_dnn/runtime/backend/_nvidia/tune_configs.yaml` | FlagDNN 默认且首选的自动调优配置位置。新算子若需 autotune，在此添加同名条目，并通过 `runtime.get_tuned_config()` 接入（详见“自动调优规则”）。 |
 
 ## kernel 开发规则
 
 - 必须实现 Triton 代码。
 - 代码和注释都不能使用中文。
 - kernel 内绝对不能 fallback 到 `torch`、`cublas`、`cudnn` 或其他库完成核心计算。
-- 可以使用 Triton 原生自动调优配置。
-- 也可以在 `FlagDNN/src/flag_dnn/runtime/backend/_nvidia/tune_configs.yaml` 中添加自动调优配置。
-- 添加仓库级自动调优配置时，参考已有算子的配置格式和调用方式。
+- 算子若需 autotune，默认且首选使用仓库级 `tune_configs.yaml` + `runtime.get_tuned_config()` 机制（详见“自动调优规则”），不要内联硬编码 `triton.Config` 列表。
 - 具体算子的 public API、参数签名、注册方式和导入路径应从 FlagDNN 现有算子中推断；如果无法推断，先记录假设并向用户确认阻塞字段。
 - 待实现的算子的功能和接口应对标 cuDNN 算子；cuDNN 算子详情可通过 `/home/wangbingjie/cudnn-frontend` 库查找。
 
@@ -86,10 +84,25 @@
 
 ## 自动调优规则
 
-- 优先参考 FlagDNN 已有算子的调优配置风格。
-- 如果算子性能对 block size、warps、stages 或其他 meta 参数敏感，允许增加少量有针对性的 Triton autotune 配置。
-- 如果使用 `tune_configs.yaml`，配置项名称、层级结构和读取方式必须与现有算子保持一致。
-- 不要为了穷举搜索创建过大的 autotune 配置网格；优先记录瓶颈假设并选择少量候选配置。
+- FlagDNN 的默认调优机制是仓库级 `tune_configs.yaml` + `runtime.get_tuned_config()`，当前 60+ 算子采用此方式，是本仓库的标准做法。新算子若需 autotune，必须优先采用此机制，不要内联硬编码 `triton.Config` 列表。
+- 标准接法（参考 `src/flag_dnn/ops/relu.py`、`src/flag_dnn/ops/softmax.py`）：在算子 kernel 上用 `runtime.get_tuned_config("<op_name>")` 作为 `@triton.autotune` 的 `configs`：
+
+  ```python
+  from flag_dnn import runtime
+
+  @triton.autotune(
+      configs=runtime.get_tuned_config("<op_name>"),  # 读取 tune_configs.yaml 中的同名条目
+      key=[...],                                       # 影响最优配置的 shape/dtype 等字段
+  )
+  @triton.jit
+  def <op>_kernel(...):
+      ...
+  ```
+
+- 在 `src/flag_dnn/runtime/backend/_nvidia/tune_configs.yaml` 中新增一个与 `get_tuned_config("<op_name>")` 同名的顶层条目。结构必须对齐已有条目：`gen: true` + `param_map`（META 字段映射、`num_warps`、`num_stages`）+ 各参数（如 `block_size`、`warps`、`stages`）的候选值列表。`configloader.py` 会按 `param_map` 自动把这些候选展开成 `triton.Config` 组合。
+- 注意：`batch_norm.py` 等少数算子直接硬编码 `@triton.autotune(configs=[...])`、不读 YAML，属于历史/特例写法，不要作为新算子的参照模板。
+- 配置项名称、层级结构和读取方式必须与现有 YAML 条目保持一致。
+- 配置网格要围绕瓶颈假设收窄；不要为了穷举搜索铺过大网格，优先记录瓶颈假设并选择少量候选配置。
 
 ## 每个算子的补充契约模板
 
@@ -102,7 +115,7 @@
 - kernel 文件：
 - 功能测试文件：
 - 性能测试文件：
-- 自动调优配置：
+- 自动调优配置：（tune_configs.yaml 中的条目名 + get_tuned_config 接入点）
 
 ## 接口规则
 - public API：
