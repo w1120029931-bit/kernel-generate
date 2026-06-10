@@ -33,14 +33,14 @@
 | kernel 实现 | `FlagDNN/src/flag_dnn/ops` | 新增或修改 Triton 算子实现的位置。 |
 | 功能测试 | `FlagDNN/tests_graph` | 新增或修改功能测试的位置。 |
 | 性能测试 | `FlagDNN/benchmark_graph` | 新增或修改性能测试的位置。 |
-| NVIDIA 自动调优配置 | `FlagDNN/src/flag_dnn/runtime/backend/_nvidia/tune_configs.yaml` | FlagDNN 默认且首选的自动调优配置位置。新算子若需 autotune，在此添加同名条目，并通过 `runtime.get_tuned_config()` 接入（详见“自动调优规则”）。 |
+| NVIDIA 自动调优配置 | `FlagDNN/src/flag_dnn/runtime/backend/_nvidia/tune_configs.yaml` | FlagDNN 默认且首选的自动调优配置位置。算子存在 tunable META 时，在此添加同名条目，并通过 `runtime.get_tuned_config()` 接入（详见“自动调优规则”）。 |
 
 ## kernel 开发规则
 
 - 必须实现 Triton 代码。
 - 代码和注释都不能使用中文。
 - kernel 内绝对不能 fallback 到 `torch`、`cublas`、`cudnn` 或其他库完成核心计算。
-- 算子若需 autotune，默认且首选使用仓库级 `tune_configs.yaml` + `runtime.get_tuned_config()` 机制（详见“自动调优规则”），不要内联硬编码 `triton.Config` 列表。
+- 算子存在 tunable META 时，必须使用仓库级 `tune_configs.yaml` + `runtime.get_tuned_config()` 机制（详见“自动调优规则”），不要内联硬编码 `triton.Config` 列表。
 - 具体算子的 public API、参数签名、注册方式和导入路径应从 FlagDNN 现有算子中推断；如果无法推断，先记录假设并向用户确认阻塞字段。
 - 待实现的算子的功能和接口应对标 cuDNN 算子；cuDNN 算子详情可通过 `/home/wangbingjie/cudnn-frontend` 库查找。
 
@@ -74,6 +74,7 @@
 - shape 覆盖要充分，至少覆盖典型生产 shape、边界 shape 和能暴露访存/启动开销瓶颈的 shape。
 - 根据仓库已有框架实现性能测试后，执行性能测试会输出 `speedup` 信息，因此不要在性能测试代码中编写 assert `speedup >= 0.9` 等类似代码。
 - 当 `speedup < 0.9` 时，视为当前实现性能不合格。由于性能测试使用了 graph 功能，必须先量化性能差是否由 graph、runner、prepared op 或 capture/dispatch 开销引起；只有实测显示 graph 不是主要瓶颈后，才能把主要优化方向转向 kernel 本体。
+- 第一次正式性能测试前，存在 tunable META 的算子必须完成 `tune_configs.yaml`/`runtime.get_tuned_config()` 接入，并用 `TRITON_PRINT_AUTOTUNING=1` 记录候选配置来源、调优输出和最终命中配置。若 `speedup < 0.9` 且 tunable META 仍硬编码，下一步必须接入或修正自动调优配置，不能继续只改固定 tile/warps/stages 作为主要优化路线。
 
 ## Graph 性能归因规则
 
@@ -84,7 +85,8 @@
 
 ## 自动调优规则
 
-- FlagDNN 的默认调优机制是仓库级 `tune_configs.yaml` + `runtime.get_tuned_config()`，当前 60+ 算子采用此方式，是本仓库的标准做法。新算子若需 autotune，必须优先采用此机制，不要内联硬编码 `triton.Config` 列表。
+- FlagDNN 的默认调优机制是仓库级 `tune_configs.yaml` + `runtime.get_tuned_config()`，当前 60+ 算子采用此方式，是本仓库的标准做法。新算子或正在优化的算子只要存在 tunable META，就必须优先采用此机制，不要内联硬编码 `triton.Config` 列表。
+- 硬性门槛：对新实现或正在优化的 FlagDNN Triton 算子，只要存在 `BLOCK_*`、tile、split、`num_warps`、`num_stages`、grouping 等 tunable META，功能测试通过后必须先添加或更新 `_nvidia/tune_configs.yaml` 并通过 `runtime.get_tuned_config()` 接入，再运行第一次正式性能测试、进行多轮手动参数优化或下性能结论。固定 META 只允许作为正确性 bootstrap、受控单轮探索，或在有明确证据说明自动调优不适用/被阻塞时作为例外。
 - 标准接法（参考 `src/flag_dnn/ops/relu.py`、`src/flag_dnn/ops/softmax.py`）：在算子 kernel 上用 `runtime.get_tuned_config("<op_name>")` 作为 `@triton.autotune` 的 `configs`：
 
   ```python
