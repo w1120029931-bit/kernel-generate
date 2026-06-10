@@ -21,6 +21,8 @@ description: >
 
 ## 执行规则
 
+开始 kernel 实现、性能测试或性能优化前，先执行本 skill 附带的 `scripts/check_kernel_tools.py`，并向用户说明 PTX、SASS、NCU 工具是否可用。
+
 1. 写代码前先读取 `custom_op_contract.md`，并把其中的具体仓库规则作为当前任务的硬约束。
 2. 不要在 `SKILL.md`、`kernel_impl_optimization.md` 或 README 中新增具体仓库名、仓库路径、测试目录、benchmark 目录、注册方式或项目专属代码风格；这些内容只能写入 `custom_op_contract.md`。
 3. 实现前先整理算子契约：公开 API、参数签名、输出约定、shape/dtype/layout 规则、参考实现、误差容忍度、功能测试覆盖、性能测试基准和通过条件。

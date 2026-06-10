@@ -16,6 +16,16 @@
 - kernel 语言：Triton
 - 目标：为算子开发 Triton kernel、功能测试和性能测试，并按性能测试结果迭代优化。
 
+## 运行环境
+
+- Python 解释器：`/home/wangbingjie/py312/bin/python3`（venv，含 torch/triton/pytest/cudnn-frontend）。
+- 以脚本文件方式运行 Python 时，必须前缀
+  `LD_LIBRARY_PATH=/root/micromamba-root/envs/toolchain/lib:$LD_LIBRARY_PATH`，
+  否则 `import cudnn` 因系统 libstdc++ 缺少 GLIBCXX_3.4.32 失败。
+- 测试命令示例：
+  `cd FlagDNN && LD_LIBRARY_PATH=/root/micromamba-root/envs/toolchain/lib:$LD_LIBRARY_PATH /home/wangbingjie/py312/bin/python3 -m pytest tests_graph/test_<op>.py -v`
+- GPU：NVIDIA H100 80GB（sm90）。
+
 ## 目录与文件位置
 
 | 内容 | 位置 | 说明 |

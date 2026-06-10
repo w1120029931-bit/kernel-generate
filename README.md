@@ -17,11 +17,15 @@
 |-- README.md
 |-- pyproject.toml
 |-- scripts/
+|   |-- install_to_codex.sh
+|   |-- install_to_claude.sh
 |   `-- validate_skills.py
 `-- skills/
     `-- kernel-generate/
         |-- LICENSE.txt
         |-- SKILL.md
+        |-- scripts/
+        |   `-- check_kernel_tools.py
         `-- references/
             |-- custom_op_contract.md
             `-- kernel_impl_optimization.md
@@ -57,6 +61,29 @@ $skill-installer install https://github.com/<owner>/<repo>/tree/main/skills/kern
 ```
 
 注意：`$skill-installer` 从 GitHub 安装时，目标 skill 已存在会中止。需要更新时，先删除旧目录，或继续使用本地软链接安装。
+
+## 安装到 Claude Code
+
+本仓库的 skill 使用 Claude Code 原生的 `SKILL.md` + frontmatter 格式，无需改造即可被 Claude CLI 识别。
+
+本地开发推荐软链接安装：
+
+```bash
+cd /home/wangbingjie/kernel-generate
+./scripts/install_to_claude.sh
+```
+
+默认安装到 `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/kernel-generate`。软链接安装后，仓库内容更新会直接反映到 skill；重启 Claude Code 或开启新会话即可重新加载。
+
+如果需要复制安装当前版本：
+
+```bash
+./scripts/install_to_claude.sh --copy
+```
+
+加载后可用 `/kernel-generate` 显式调用，或用自然语言触发（匹配 `SKILL.md` 中的 `description`）。
+
+如需随仓库共享给团队，也可改装到项目级目录 `<repo>/.claude/skills/kernel-generate/` 并提交进 git，clone 仓库的人即可自动获得该 skill。
 
 ## 校验
 
