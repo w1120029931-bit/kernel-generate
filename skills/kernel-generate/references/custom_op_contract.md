@@ -70,8 +70,9 @@
 - 性能测试必须放在 `FlagDNN/benchmark_graph`。
 - 性能测试必须是 FlagDNN 的 triton 算子与 cudnn 算子做对比。
 - 编写性能测试时参考 FlagDNN 其他算子的性能测试框架、命名方式、输入构造、计时方式和输出格式。
-- 性能测试 shape 需要根据当前算子的语义做针对性适配。
-- shape 覆盖要充分，至少覆盖典型生产 shape、边界 shape 和能暴露访存/启动开销瓶颈的 shape。
+- 性能测试文件的必测 shape 必须恰好 8 个，且这 8 个 shape 必须是该算子的重点性能 shape。
+- 8 个重点性能 shape 需要根据当前算子的语义做针对性适配，优先来自真实模型或业务路径、已有 benchmark、典型生产规模、边界但性能敏感场景，以及能暴露访存/启动开销瓶颈的场景。
+- 不得用重复、随意或只验证正确性的 shape 填数；如果无法确定 8 个重点 shape，先从代码、文档、已有 benchmark、算子契约和 cuDNN frontend 语义推断并记录假设，只有关键 shape 无法推断且会影响性能结论时才向用户确认。
 - 根据仓库已有框架实现性能测试后，执行性能测试会输出 `speedup` 信息，因此不要在性能测试代码中编写 assert `speedup >= 0.9` 等类似代码。
 - 当 `speedup < 0.9` 时，视为当前实现性能不合格。由于性能测试使用了 graph 功能，必须先量化性能差是否由 graph、runner、prepared op 或 capture/dispatch 开销引起；只有实测显示 graph 不是主要瓶颈后，才能把主要优化方向转向 kernel 本体。
 - 第一次正式性能测试前，存在 tunable META 的算子必须完成 `tune_configs.yaml`/`runtime.get_tuned_config()` 接入，并用 `TRITON_PRINT_AUTOTUNING=1` 记录候选配置来源、调优输出和最终命中配置。若 `speedup < 0.9` 且 tunable META 仍硬编码，下一步必须接入或修正自动调优配置，不能继续只改固定 tile/warps/stages 作为主要优化路线。
@@ -133,7 +134,7 @@
 
 ## 性能规则
 - 基准实现：
-- 性能测试 shape：
+- 性能测试 shape：恰好 8 个重点性能 shape + 选择依据
 - speedup 输出方式：
 - graph/direct/kernel 归因方式：
 - 深度调优证据：PTX / SASS / NCU / 工具不可用原因

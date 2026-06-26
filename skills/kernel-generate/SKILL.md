@@ -18,6 +18,7 @@ description: >
 
 - [references/custom_op_contract.md](references/custom_op_contract.md)：实现前必须读取。这是唯一允许记录具体实现仓库规则、路径、测试框架、性能测试框架、代码风格和项目约束的文件。
 - [references/kernel_impl_optimization.md](references/kernel_impl_optimization.md)：编写或修改 Triton 代码前必须读取。用于 kernel 设计、启动结构、索引、mask、访存行为和性能优化。
+- [references/complex_operator_performance_patterns.md](references/complex_operator_performance_patterns.md)：优化 matmul、conv、attention/SDPA、复杂 GEMM-like 或多阶段归约算子时读取；尤其适用于基础 autotune 后仍不达标、需要 shape/dtype 分流、layout pack、split/reduce、persistent、descriptor/TMA、zero+atomic 或算法级重映射的场景。
 
 ## 执行规则
 
@@ -86,7 +87,7 @@ description: >
 2. **Benchmark 与归因**：确认计时方式、编译缓存、warmup、同步、graph/capture 开销和 speedup 计算有效。将不达标原因归类为 benchmark 偏差、包装层/graph 开销、kernel 本体、baseline 算法差距、工具/环境阻塞或仍未归因。
 3. **针对性迭代**：每轮选择一个慢用例，提出一个瓶颈假设，只做一个连贯修改：自动调优配置、kernel 代码、启动/包装层、dispatch 分流或算法结构。默认只跑相关性能测试；只有改动触及接口、shape/dtype、索引、mask、输出分配、别名/in-place 或数值路径时，才跑最小功能测试子集。
 4. **工具分析**：autotune 后仍不达标且 kernel 瓶颈不清，或同一瓶颈连续 1-2 轮无改善时，立即按 [references/kernel_impl_optimization.md](references/kernel_impl_optimization.md) dump PTX；SASS 或 NCU 工具可用时继续反汇编/采集硬件指标。工具不可用时，记录具体命令、失败原因和替代证据。
-5. **升级路线**：如果参数、autotune 和局部代码调优不能达标，必须实现下一个可信算法路线，例如 fused split/reduce、分层归约、替代 GEMM 映射、persistent/stream-K、layout 变换、专用 shape kernel 或基准算法等价实现。不能只把它写成“下一步”。
+5. **升级路线**：如果参数、autotune 和局部代码调优不能达标，必须实现下一个可信算法路线，例如 fused split/reduce、分层归约、替代 GEMM 映射、persistent/stream-K、layout 变换、专用 shape kernel 或基准算法等价实现。优化 matmul、conv、attention/SDPA 等复杂算子时，先读取 [references/complex_operator_performance_patterns.md](references/complex_operator_performance_patterns.md) 选择可验证的算法级路线，不能只把它写成“下一步”。
 
 有效优化迭代必须在优化日志中用递增轮次记录，例如 `## Round 01 - ...`。一轮只有同时满足以下条件才计数：
 
