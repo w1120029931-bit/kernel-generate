@@ -23,7 +23,7 @@
   `LD_LIBRARY_PATH=/root/micromamba-root/envs/toolchain/lib:$LD_LIBRARY_PATH`，
   否则 `import cudnn` 因系统 libstdc++ 缺少 GLIBCXX_3.4.32 失败。
 - 测试命令示例：
-  `cd FlagDNN && LD_LIBRARY_PATH=/root/micromamba-root/envs/toolchain/lib:$LD_LIBRARY_PATH /home/wangbingjie/py312/bin/python3 -m pytest tests_graph/test_<op>.py -v`
+  `cd FlagDNN && LD_LIBRARY_PATH=/root/micromamba-root/envs/toolchain/lib:$LD_LIBRARY_PATH /home/wangbingjie/py312/bin/python3 -m pytest tests/test_<op>.py -v`
 - GPU：NVIDIA H100 80GB（sm90）。
 
 ## 目录与文件位置
@@ -31,8 +31,8 @@
 | 内容 | 位置 | 说明 |
 |------|------|------|
 | kernel 实现 | `FlagDNN/src/flag_dnn/ops` | 新增或修改 Triton 算子实现的位置。 |
-| 功能测试 | `FlagDNN/tests_graph` | 新增或修改功能测试的位置。 |
-| 性能测试 | `FlagDNN/benchmark_graph` | 新增或修改性能测试的位置。 |
+| 功能测试 | `FlagDNN/tests` | 新增或修改功能测试的位置。 |
+| 性能测试 | `FlagDNN/benchmark` | 新增或修改性能测试的位置。 |
 | NVIDIA 自动调优配置 | `FlagDNN/src/flag_dnn/runtime/backend/_nvidia/tune_configs.yaml` | FlagDNN 默认且首选的自动调优配置位置。算子存在 tunable META 时，在此添加同名条目，并通过 `runtime.get_tuned_config()` 接入（详见“自动调优规则”）。 |
 
 ## kernel 开发规则
@@ -57,7 +57,7 @@
 
 ## 功能测试规则
 
-- 功能测试必须放在 `FlagDNN/tests_graph`。
+- 功能测试必须放在 `FlagDNN/tests`。
 - 功能测试必须是 FlagDNN 的 triton 算子与 cudnn 算子做对比。
 - 编写测试时参考 FlagDNN 其他算子的测试框架、命名方式、fixture 和断言风格。
 - 功能测试 shape 需要根据当前算子的语义做针对性适配。
@@ -67,7 +67,7 @@
 
 ## 性能测试规则
 
-- 性能测试必须放在 `FlagDNN/benchmark_graph`。
+- 性能测试必须放在 `FlagDNN/benchmark`。
 - 性能测试必须是 FlagDNN 的 triton 算子与 cudnn 算子做对比。
 - 编写性能测试时参考 FlagDNN 其他算子的性能测试框架、命名方式、输入构造、计时方式和输出格式。
 - 性能测试文件的必测 shape 必须恰好 8 个，且这 8 个 shape 必须是该算子的重点性能 shape。
@@ -82,7 +82,7 @@
 - 如果声称 graph 不是主要瓶颈，必须在优化日志中记录受控对比数据，例如 FlagDNN graph path、direct op 或 prepared runner path、可访问时的 Triton kernel wrapper path 的耗时和 speedup。
 - 如果 graph path 和 direct path 差距明显，先定位并优化 graph、runner、prepared op、capture 缓存或 dispatch 逻辑；不要直接归因到 kernel 算法。
 - 如果 direct path 仍明显慢于 cuDNN frontend，继续按通用 PTX/SASS/NCU 深度调优流程分析 kernel 本体。
-- 临时归因脚本或 benchmark 变体可以放在任务临时目录；只有对仓库后续有价值时才合入 `FlagDNN/benchmark_graph`。
+- 临时归因脚本或 benchmark 变体可以放在任务临时目录；只有对仓库后续有价值时才合入 `FlagDNN/benchmark`。
 
 ## 自动调优规则
 
